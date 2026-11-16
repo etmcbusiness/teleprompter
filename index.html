@@ -34,6 +34,10 @@
   .ghost-btn { display: block; width: 100%; max-width: 340px; padding: 16px; border-radius: 16px;
     border: 1px solid var(--line); font-size: 17px; }
   #error { color: #ff6b6b; }
+  .link-row { display: flex; gap: 8px; width: 100%; max-width: 340px; margin: 0; }
+  .link-row input { flex: 1; min-width: 0; padding: 14px; border-radius: 14px; border: 1px solid var(--line);
+    background: #1c1c1e; color: var(--fg); font-size: 16px; }
+  .link-row .ghost-btn { width: auto; padding: 14px 18px; }
   .tips { font-size: 14px; }
 
   /* ---------- Prompter ---------- */
@@ -94,14 +98,19 @@
 
 <section id="home">
   <h1>Prompter</h1>
-  <p>Upload a Word document (.docx). Headings become sections you can jump between.</p>
+  <p>Upload a Word document or paste a Google Docs link. Headings become sections you can jump between.</p>
   <button class="big-btn" id="pick">Choose Word document</button>
+  <form id="gdoc-form" class="link-row">
+    <input id="gdoc-url" type="url" inputmode="url" autocomplete="off" placeholder="Paste Google Docs link">
+    <button class="ghost-btn" id="gdoc-go" type="submit">Open</button>
+  </form>
   <button class="ghost-btn hidden" id="resume"></button>
+  <p id="status" class="hidden"></p>
   <p id="error" class="hidden"></p>
-  <p class="tips">Section breaks are found from Word headings, short <b>bold</b> lines, lines like
+  <p class="tips">Google Docs: set Share → General access to “Anyone with the link”, then copy the link.<br><br>
+    Section breaks are found from headings, short <b>bold</b> lines, lines like
     “Section 2 / Part 3 / Scene 1”, and divider lines (<code>---</code> or <code>***</code>).</p>
-  <input type="file" id="file" class="hidden"
-         accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+  <input type="file" id="file" class="hidden">
 </section>
 
 <section id="prompter" class="hidden">
@@ -198,26 +207,60 @@ function refreshResume() {
 
 $("pick").onclick = () => { $("file").value = ""; $("file").click(); };
 $("resume").onclick = () => openDoc(store.get("doc"), store.get("pos", 0));
+function showStatus(msg) { $("status").textContent = msg; $("status").classList.toggle("hidden", !msg); }
+
+const GDOC_ID = /docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([\w-]{20,})/;
+
+async function loadDocx(buf, name) {
+  const { value } = await mammoth.convertToHtml({ arrayBuffer: buf });
+  const sections = toSections(value);
+  if (!sections.length) { showError("No text found in that document."); return; }
+  const doc = { name: name || sections[0].title, sections };
+  store.set("doc", doc); store.set("pos", 0);
+  openDoc(doc, 0);
+}
+
+async function loadGoogleDoc(url) {
+  showError("");
+  if (/\/document\/d\/e\//.test(url)) {
+    showError("That's a “Publish to web” link. Use the normal Share link instead (Share → Copy link).");
+    return;
+  }
+  const m = url.match(GDOC_ID);
+  if (!m) { showError("That doesn't look like a Google Docs link. It should contain docs.google.com/document/d/…"); return; }
+  showStatus("Loading Google Doc…");
+  try {
+    const r = await fetch(`https://docs.google.com/document/d/${m[1]}/export?format=docx`);
+    const buf = r.ok ? await r.arrayBuffer() : null;
+    // a real .docx is a zip file, which starts with "PK"
+    if (!buf || new Uint8Array(buf, 0, 2).join() !== "80,75") throw new Error("not shared");
+    await loadDocx(buf, null);
+  } catch (e) {
+    console.error(e);
+    showError("Couldn't open that Google Doc. In Google Docs, tap Share → General access → “Anyone with the link”, then try again.");
+  } finally { showStatus(""); }
+}
+
+$("gdoc-form").onsubmit = e => { e.preventDefault(); loadGoogleDoc($("gdoc-url").value.trim()); };
+
 $("file").onchange = async () => {
   const f = $("file").files[0];
   if (!f) return;
   showError("");
-  if (!/\.docx$/i.test(f.name)) {
-    showError(/\.doc$/i.test(f.name)
-      ? "That's an old .doc file. Open it in Word or Pages and save/export it as .docx, then try again."
-      : "Please choose a Word .docx file.");
-    return;
-  }
   try {
-    const { value } = await mammoth.convertToHtml({ arrayBuffer: await f.arrayBuffer() });
-    const sections = toSections(value);
-    if (!sections.length) { showError("No text found in that document."); return; }
-    const doc = { name: f.name.replace(/\.docx$/i, ""), sections };
-    store.set("doc", doc); store.set("pos", 0);
-    openDoc(doc, 0);
+    const buf = await f.arrayBuffer();
+    const head = new Uint8Array(buf, 0, Math.min(2, buf.byteLength)).join();
+    if (head === "80,75") return await loadDocx(buf, f.name.replace(/\.docx$/i, ""));
+    // Google Drive shortcuts (.gdoc) picked from the Files app contain the doc's link or id
+    const text = new TextDecoder().decode(buf.slice(0, 20000));
+    const link = text.match(GDOC_ID) || text.match(/"doc_id"\s*:\s*"([\w-]{20,})"/);
+    if (link) return await loadGoogleDoc(`https://docs.google.com/document/d/${link[1]}/`);
+    showError(/\.doc$/i.test(f.name)
+      ? "That's an old .doc file. Open it in Word or Pages and save it as .docx, then try again."
+      : "Please choose a Word (.docx) file, or paste a Google Docs link.");
   } catch (e) {
     console.error(e);
-    showError("Couldn't read that file. Make sure it's a valid Word .docx.");
+    showError("Couldn't read that file. Make sure it's a Word .docx.");
   }
 };
 
