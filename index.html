@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Prompter</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --bg: #000; --fg: #f5f5f5; --muted: #8a8a8a; --accent: #ffcc33;
+    --panel: rgba(28,28,30,.92); --line: rgba(255,255,255,.12);
+    --safe-t: env(safe-area-inset-top); --safe-b: env(safe-area-inset-bottom);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* ---------- Home ---------- */
+  #home { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; padding: calc(24px + var(--safe-t)) 24px calc(24px + var(--safe-b)); text-align: center; }
+  #home h1 { margin: 0; font-size: 34px; letter-spacing: -.5px; }
+  #home p { margin: 0; color: var(--muted); max-width: 340px; line-height: 1.45; }
+  .big-btn { display: block; width: 100%; max-width: 340px; padding: 18px; border-radius: 16px;
+    background: var(--accent); color: #000; font-size: 19px; font-weight: 700; }
+  .ghost-btn { display: block; width: 100%; max-width: 340px; padding: 16px; border-radius: 16px;
+    border: 1px solid var(--line); font-size: 17px; }
+  #error { color: #ff6b6b; }
+  .tips { font-size: 14px; }
+
+  /* ---------- Prompter ---------- */
+  #prompter { position: fixed; inset: 0; }
+  #scroller { position: absolute; inset: 0; overflow-y: scroll; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  #scroller::-webkit-scrollbar { display: none; }
+  #script { padding: 45vh 6vw 75vh; font-weight: 600; line-height: 1.35; }
+  #script.mirror { transform: scaleX(-1); }
+  #script p { margin: 0 0 .9em; overflow-wrap: break-word; }
+  .section { padding-top: .2em; }
+  .section + .section { margin-top: 1.6em; }
+  .section-title { display: flex; align-items: baseline; gap: .5em; margin: 0 0 .7em; padding-bottom: .25em;
+    border-bottom: 3px solid var(--accent); color: var(--accent); font-size: .7em; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .04em; }
+  .section-title small { font-size: .55em; color: var(--muted); font-weight: 600; letter-spacing: 0; }
+
+  /* reading guide */
+  #guide { position: absolute; left: 0; right: 0; top: 33%; height: 0; pointer-events: none; }
+  #guide::before, #guide::after { content: ""; position: absolute; top: -10px; border: 10px solid transparent; }
+  #guide::before { left: 0; border-left-color: var(--accent); }
+  #guide::after { right: 0; border-right-color: var(--accent); }
+  #fade-top, #fade-bot { position: absolute; left: 0; right: 0; pointer-events: none; }
+  #fade-top { top: 0; height: 18%; background: linear-gradient(#000, rgba(0,0,0,0)); }
+  #fade-bot { bottom: 0; height: 22%; background: linear-gradient(rgba(0,0,0,0), #000); }
+
+  #topbar { position: absolute; top: 0; left: 0; right: 0; padding: calc(8px + var(--safe-t)) 14px 8px;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; color: var(--muted);
+    transition: opacity .4s; }
+  #section-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #progress { position: absolute; left: 0; top: 0; height: 3px; background: var(--accent); width: 0; }
+
+  #controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(10px + var(--safe-b));
+    background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line); transition: opacity .4s, transform .4s; }
+  .playing #controls, .playing #topbar { opacity: .18; }
+  .playing.show-ui #controls, .playing.show-ui #topbar { opacity: 1; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .row + .row { margin-top: 10px; }
+  .ctl { min-width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; font-size: 20px; }
+  .ctl:active { background: rgba(255,255,255,.12); }
+  #play { width: 72px; height: 56px; border-radius: 28px; background: var(--accent); color: #000; font-size: 24px; }
+  .slider { display: flex; align-items: center; gap: 10px; flex: 1; font-size: 13px; color: var(--muted); }
+  .slider span:first-child { width: 42px; }
+  .slider output { width: 30px; text-align: right; color: var(--fg); font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 32px; }
+
+  /* section list */
+  #sheet { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; }
+  #sheet-inner { width: 100%; max-height: 70%; overflow-y: auto; background: #1c1c1e; border-radius: 18px 18px 0 0;
+    padding: 8px 0 calc(12px + var(--safe-b)); }
+  #sheet h2 { font-size: 15px; color: var(--muted); margin: 10px 18px; font-weight: 600; }
+  #sheet-inner button { display: block; width: 100%; text-align: left; padding: 14px 18px; font-size: 17px;
+    border-top: 1px solid var(--line); }
+  #sheet-inner button.current { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<section id="home">
+  <h1>Prompter</h1>
+  <p>Upload a Word document (.docx). Headings become sections you can jump between.</p>
+  <button class="big-btn" id="pick">Choose Word document</button>
+  <button class="ghost-btn hidden" id="resume"></button>
+  <p id="error" class="hidden"></p>
+  <p class="tips">Section breaks are found from Word headings, short <b>bold</b> lines, lines like
+    “Section 2 / Part 3 / Scene 1”, and divider lines (<code>---</code> or <code>***</code>).</p>
+  <input type="file" id="file" class="hidden"
+         accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+</section>
+
+<section id="prompter" class="hidden">
+  <div id="scroller"><div id="script"></div></div>
+  <div id="fade-top"></div><div id="fade-bot"></div>
+  <div id="guide"></div>
+  <div id="topbar"><div id="progress"></div>
+    <span id="section-label"></span><button id="sections-btn" class="ctl" style="height:32px;font-size:14px">Sections ☰</button>
+  </div>
+  <div id="controls">
+    <div class="row">
+      <button class="ctl" id="close" aria-label="Close">✕</button>
+      <button class="ctl" id="restart" aria-label="Back to start">⏮</button>
+      <button class="ctl" id="prev" aria-label="Previous section">◀︎</button>
+      <button id="play" aria-label="Play">▶︎</button>
+      <button class="ctl" id="next" aria-label="Next section">▶︎</button>
+      <button class="ctl" id="mirror" aria-label="Mirror text">⇋</button>
+      <span style="width:48px"></span>
+    </div>
+    <div class="row">
+      <label class="slider"><span>Speed</span>
+        <input type="range" id="speed" min="1" max="40" step="1"><output id="speed-out"></output></label>
+    </div>
+    <div class="row">
+      <label class="slider"><span>Size</span>
+        <input type="range" id="size" min="20" max="120" step="2"><output id="size-out"></output></label>
+    </div>
+  </div>
+  <div id="sheet" class="hidden"><div id="sheet-inner"></div></div>
+</section>
+
+<script src="mammoth.browser.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+/* ---------------- Parsing: .docx -> [{title, paras:[]}] ---------------- */
+const DIVIDER = /^\s*([-*_=~#•·]\s*){3,}\s*$/;
+const LABELED = /^\s*(section|part|chapter|scene|segment|act|slide|intro(duction)?|outro|conclusion|closing|opening)\b[\s\w.:#-]{0,50}$/i;
+const MD_HEAD = /^\s*#{1,6}\s+(.+)$/;
+const BRACKET = /^\s*\[([^\]]{1,60})\]\s*$/;
+
+function clean(t) { return t.replace(/\s+/g, " ").trim(); }
+
+function isBoldOnly(el) {
+  const text = clean(el.textContent);
+  if (!text || text.length > 70) return false;
+  let bold = "";
+  el.querySelectorAll("strong, b").forEach(b => { if (!b.parentElement.closest("strong, b")) bold += b.textContent; });
+  return clean(bold) === text;
+}
+
+function toSections(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const sections = [];
+  let cur = null;
+  const start = title => { cur = { title: title || "", paras: [] }; sections.push(cur); };
+  const addPara = t => { if (!cur) start(""); cur.paras.push(t); };
+
+  const visit = el => {
+    const tag = el.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) { const t = clean(el.textContent); if (t) start(t); return; }
+    if (tag === "ul" || tag === "ol") { el.querySelectorAll(":scope > li").forEach(visit); return; }
+    if (tag === "table") { el.querySelectorAll("td, th").forEach(c => { const t = clean(c.textContent); if (t) addPara(t); }); return; }
+    const text = clean(el.textContent);
+    if (!text) return;
+    let m;
+    if (DIVIDER.test(text)) { start(""); return; }
+    if ((m = text.match(MD_HEAD)) || (m = text.match(BRACKET))) { start(clean(m[1])); return; }
+    if (LABELED.test(text) && text.length <= 60) { start(text.replace(/[:.]\s*$/, "")); return; }
+    if (isBoldOnly(el)) { start(text.replace(/[:.]\s*$/, "")); return; }
+    addPara(text);
+  };
+  [...doc.body.children].forEach(visit);
+
+  // drop empty sections created by back-to-back breaks; number untitled ones
+  const out = sections.filter(s => s.paras.length);
+  out.forEach((s, i) => { if (!s.title) s.title = "Section " + (i + 1); });
+  return out;
+}
+
+/* ---------------- Home ---------------- */
+function showError(msg) { $("error").textContent = msg; $("error").classList.toggle("hidden", !msg); }
+
+function refreshResume() {
+  const doc = store.get("doc", null);
+  $("resume").classList.toggle("hidden", !doc);
+  if (doc) $("resume").textContent = "Open last: " + doc.name;
+}
+
+$("pick").onclick = () => { $("file").value = ""; $("file").click(); };
+$("resume").onclick = () => openDoc(store.get("doc"), store.get("pos", 0));
+$("file").onchange = async () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  showError("");
+  if (!/\.docx$/i.test(f.name)) {
+    showError(/\.doc$/i.test(f.name)
+      ? "That's an old .doc file. Open it in Word or Pages and save/export it as .docx, then try again."
+      : "Please choose a Word .docx file.");
+    return;
+  }
+  try {
+    const { value } = await mammoth.convertToHtml({ arrayBuffer: await f.arrayBuffer() });
+    const sections = toSections(value);
+    if (!sections.length) { showError("No text found in that document."); return; }
+    const doc = { name: f.name.replace(/\.docx$/i, ""), sections };
+    store.set("doc", doc); store.set("pos", 0);
+    openDoc(doc, 0);
+  } catch (e) {
+    console.error(e);
+    showError("Couldn't read that file. Make sure it's a valid Word .docx.");
+  }
+};
+
+/* ---------------- Prompter ---------------- */
+const scroller = $("scroller"), script = $("script"), P = $("prompter");
+const settings = Object.assign({ speed: 10, size: 48, mirror: false }, store.get("settings", {}));
+let playing = false, pos = 0, lastSet = 0, lastT = 0, touching = false, uiTimer, wakeLock = null;
+let sectionEls = [];
+
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+
+function openDoc(doc, startPos) {
+  const n = doc.sections.length;
+  script.innerHTML = doc.sections.map((s, i) =>
+    `<div class="section"><div class="section-title">${esc(s.title)}${n > 1 ? `<small>${i + 1}/${n}</small>` : ""}</div>` +
+    s.paras.map(p => `<p>${esc(p)}</p>`).join("") + `</div>`).join("");
+  sectionEls = [...script.querySelectorAll(".section")];
+  $("sheet-inner").innerHTML = `<h2>${esc(doc.name)}</h2>` +
+    doc.sections.map((s, i) => `<button data-i="${i}">${i + 1}. ${esc(s.title)}</button>`).join("");
+  $("home").classList.add("hidden"); P.classList.remove("hidden");
+  applySettings();
+  jumpTo(startPos || 0);
+}
+
+function applySettings() {
+  script.style.fontSize = settings.size + "px";
+  script.classList.toggle("mirror", settings.mirror);
+  $("speed").value = settings.speed; $("speed-out").textContent = settings.speed;
+  $("size").value = settings.size; $("size-out").textContent = settings.size;
+  store.set("settings", settings);
+}
+
+function guideY() { return scroller.clientHeight * 0.33; }
+function jumpTo(y) {
+  pos = Math.max(0, Math.min(y, scroller.scrollHeight - scroller.clientHeight));
+  scroller.scrollTop = pos; lastSet = scroller.scrollTop; updateStatus();
+}
+function sectionTop(i) { return sectionEls[i].offsetTop - guideY() + 4; }
+function currentSection() {
+  const y = scroller.scrollTop + guideY();
+  let idx = 0;
+  sectionEls.forEach((el, i) => { if (el.offsetTop <= y + 5) idx = i; });
+  return idx;
+}
+function updateStatus() {
+  if (!sectionEls.length) return;
+  const i = currentSection();
+  $("section-label").textContent = `${i + 1}/${sectionEls.length} · ${sectionEls[i].querySelector(".section-title").firstChild.textContent}`;
+  const max = scroller.scrollHeight - scroller.clientHeight;
+  $("progress").style.width = (max > 0 ? scroller.scrollTop / max * 100 : 0) + "%";
+  [...$("sheet-inner").querySelectorAll("button")].forEach((b, j) => b.classList.toggle("current", j === i));
+}
+
+// speed is in tenths of a line per second, so the reading pace stays the same when the text size changes
+function pxPerSec() { return settings.speed / 10 * settings.size * 1.35; }
+
+function tick(t) {
+  if (!playing) return;
+  const dt = lastT ? Math.min((t - lastT) / 1000, 0.1) : 0;
+  lastT = t;
+  if (!touching) {
+    pos += pxPerSec() * dt;
+    scroller.scrollTop = pos; lastSet = scroller.scrollTop;
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1) setPlaying(false);
+  }
+  requestAnimationFrame(tick);
+}
+
+async function setPlaying(on) {
+  playing = on;
+  P.classList.toggle("playing", on);
+  $("play").textContent = on ? "❚❚" : "▶︎";
+  $("play").setAttribute("aria-label", on ? "Pause" : "Play");
+  if (on) { pos = scroller.scrollTop; lastT = 0; requestAnimationFrame(tick); flashUI(); }
+  try {
+    if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+  store.set("pos", scroller.scrollTop);
+}
+function flashUI() { P.classList.add("show-ui"); clearTimeout(uiTimer); uiTimer = setTimeout(() => P.classList.remove("show-ui"), 2500); }
+
+// user scrolling (drag / momentum) moves the script; auto-scroll continues from there
+scroller.addEventListener("scroll", () => {
+  if (Math.abs(scroller.scrollTop - lastSet) > 2) { pos = scroller.scrollTop; lastSet = pos; }
+  updateStatus();
+}, { passive: true });
+scroller.addEventListener("touchstart", () => { touching = true; }, { passive: true });
+scroller.addEventListener("touchend", () => { touching = false; pos = scroller.scrollTop; }, { passive: true });
+
+// tap the text to play/pause (ignored if it was a drag)
+let downY = 0;
+scroller.addEventListener("pointerdown", e => { downY = e.clientY; });
+scroller.addEventListener("click", e => { if (Math.abs(e.clientY - downY) < 10) setPlaying(!playing); });
+$("controls").addEventListener("pointerdown", flashUI);
+$("topbar").addEventListener("pointerdown", flashUI);
+
+$("play").onclick = () => setPlaying(!playing);
+$("restart").onclick = () => jumpTo(0);
+$("prev").onclick = () => {
+  const i = currentSection();
+  // if we're well into a section, go to its start; otherwise the previous one
+  const target = scroller.scrollTop - sectionTop(i) > 40 ? i : Math.max(0, i - 1);
+  jumpTo(sectionTop(target));
+};
+$("next").onclick = () => { const i = currentSection(); if (i < sectionEls.length - 1) jumpTo(sectionTop(i + 1)); };
+$("mirror").onclick = () => { settings.mirror = !settings.mirror; applySettings(); };
+$("speed").oninput = e => { settings.speed = +e.target.value; applySettings(); };
+$("size").oninput = e => {
+  // keep the line under the guide in place while the text resizes
+  const frac = scroller.scrollTop / Math.max(1, script.scrollHeight);
+  settings.size = +e.target.value; applySettings();
+  jumpTo(frac * script.scrollHeight);
+};
+$("close").onclick = () => { setPlaying(false); P.classList.add("hidden"); $("home").classList.remove("hidden"); refreshResume(); };
+$("sections-btn").onclick = () => { $("sheet").classList.remove("hidden"); };
+$("sheet").onclick = e => {
+  const b = e.target.closest("button[data-i]");
+  if (b) jumpTo(sectionTop(+b.dataset.i));
+  if (b || e.target === $("sheet")) $("sheet").classList.add("hidden");
+};
+document.addEventListener("visibilitychange", () => { if (document.hidden && playing) setPlaying(false); });
+window.addEventListener("resize", updateStatus);
+
+refreshResume();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
