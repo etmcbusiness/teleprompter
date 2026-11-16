@@ -38,6 +38,10 @@
   .link-row input { flex: 1; min-width: 0; padding: 14px; border-radius: 14px; border: 1px solid var(--line);
     background: #1c1c1e; color: var(--fg); font-size: 16px; }
   .link-row .ghost-btn { width: auto; padding: 14px 18px; }
+  #paste { width: 100%; max-width: 340px; min-height: 64px; max-height: 64px; overflow: hidden; padding: 14px;
+    border-radius: 14px; border: 1px dashed var(--line); background: #1c1c1e; text-align: left; font-size: 16px;
+    color: var(--muted); -webkit-user-select: text; user-select: text; }
+  #paste:empty::before { content: attr(data-ph); }
   .tips { font-size: 14px; }
 
   /* ---------- Prompter ---------- */
@@ -101,9 +105,11 @@
   <p>Upload a Word document or paste a Google Docs link. Headings become sections you can jump between.</p>
   <button class="big-btn" id="pick">Choose Word document</button>
   <form id="gdoc-form" class="link-row">
-    <input id="gdoc-url" type="url" inputmode="url" autocomplete="off" placeholder="Paste Google Docs link">
+    <input id="gdoc-url" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           placeholder="Paste Google Docs link">
     <button class="ghost-btn" id="gdoc-go" type="submit">Open</button>
   </form>
+  <div id="paste" contenteditable="true" data-ph="…or copy all the text in your doc and paste it here"></div>
   <button class="ghost-btn hidden" id="resume"></button>
   <p id="status" class="hidden"></p>
   <p id="error" class="hidden"></p>
@@ -174,8 +180,20 @@ function toSections(html) {
   const start = title => { cur = { title: title || "", paras: [] }; sections.push(cur); };
   const addPara = t => { if (!cur) start(""); cur.paras.push(t); };
 
+  // Google Docs clipboard HTML: drop its non-bold <b id="docs-internal-guid…"> wrapper, and turn
+  // its bold spans (style="font-weight:700") into <strong> so bold lines still mark sections
+  doc.querySelectorAll('b[id^="docs-internal-guid"], b[style*="font-weight:normal"]').forEach(b => b.replaceWith(...b.childNodes));
+  doc.querySelectorAll("span[style]").forEach(s => {
+    const w = (s.getAttribute("style").match(/font-weight:\s*(\w+)/) || [])[1];
+    if (w === "bold" || +w >= 600) { const st = doc.createElement("strong"); st.append(...s.childNodes); s.replaceWith(st); }
+  });
+
   const visit = el => {
     const tag = el.tagName.toLowerCase();
+    if (/^(div|section|article|main|body|span|font|b|i|u|em)$/.test(tag) && [...el.children].some(c => /^(P|DIV|H[1-6]|UL|OL|TABLE)$/.test(c.tagName))) {
+      [...el.children].forEach(visit); return;
+    }
+    if (/^(meta|style|script|br|hr)$/.test(tag)) { if (tag === "hr") start(""); return; }
     if (/^h[1-6]$/.test(tag)) { const t = clean(el.textContent); if (t) start(t); return; }
     if (tag === "ul" || tag === "ol") { el.querySelectorAll(":scope > li").forEach(visit); return; }
     if (tag === "table") { el.querySelectorAll("td, th").forEach(c => { const t = clean(c.textContent); if (t) addPara(t); }); return; }
@@ -237,16 +255,45 @@ async function loadGoogleDoc(url) {
     await loadDocx(buf, null);
   } catch (e) {
     console.error(e);
-    showError("Couldn't open that Google Doc. In Google Docs, tap Share → General access → “Anyone with the link”, then try again.");
+    showError("Couldn’t open that Google Doc — it isn’t shared publicly (work accounts often block this). Easiest fix: in Google Docs, Select All → Copy, then paste into the box below.");
   } finally { showStatus(""); }
 }
 
 $("gdoc-form").onsubmit = e => { e.preventDefault(); loadGoogleDoc($("gdoc-url").value.trim()); };
 
+function loadHtml(html, name) {
+  const sections = toSections(html);
+  if (!sections.length) { showError("Nothing to read in what was pasted."); return; }
+  const doc = { name: name || sections[0].title, sections };
+  store.set("doc", doc); store.set("pos", 0);
+  openDoc(doc, 0);
+}
+function textToHtml(text) {
+  return text.split(/\r?\n/).map(l => `<p>${esc(l)}</p>`).join("");
+}
+$("paste").addEventListener("paste", e => {
+  e.preventDefault();
+  showError("");
+  const cd = e.clipboardData;
+  const html = cd.getData("text/html"), text = cd.getData("text/plain");
+  if (!html && GDOC_ID.test(text) && text.trim().length < 300) return loadGoogleDoc(text.trim());
+  loadHtml(html || textToHtml(text), null);
+});
+// fallback for keyboards that insert text without a paste event
+$("paste").addEventListener("input", () => {
+  const el = $("paste");
+  if (!el.textContent.trim()) return;
+  const html = el.innerHTML; el.innerHTML = "";
+  loadHtml(html, null);
+});
+
+window.addEventListener("error", e => showError("Something went wrong: " + e.message));
+window.addEventListener("unhandledrejection", e => showError("Something went wrong: " + (e.reason && e.reason.message || e.reason)));
+
 $("file").onchange = async () => {
   const f = $("file").files[0];
   if (!f) return;
-  showError("");
+  showError(""); showStatus("Opening " + f.name + "…");
   try {
     const buf = await f.arrayBuffer();
     const head = new Uint8Array(buf, 0, Math.min(2, buf.byteLength)).join();
@@ -260,8 +307,8 @@ $("file").onchange = async () => {
       : "Please choose a Word (.docx) file, or paste a Google Docs link.");
   } catch (e) {
     console.error(e);
-    showError("Couldn't read that file. Make sure it's a Word .docx.");
-  }
+    showError("Couldn't read that file (" + e.message + "). Try the copy-and-paste box instead.");
+  } finally { showStatus(""); }
 };
 
 /* ---------------- Prompter ---------------- */
